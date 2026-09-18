@@ -1,9 +1,18 @@
-#ignore data folder
+# Data folders and large raw data files
 Data/
+data/
+*.pkl
+batch*.pkl
+*.mat
 
-#ignore Matlab files
-*.asv
+# OS and editor files
+.DS_Store
+.vscode/
 
-#ignore jupyter notebook files
+# Python and Jupyter artifacts
 .ipynb_checkpoints/
 __pycache__/
+*.pyc
+
+# Ignore Matlab files
+*.asv

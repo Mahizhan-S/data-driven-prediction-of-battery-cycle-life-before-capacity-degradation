@@ -1,0 +1,210 @@
+=== v4 Training Started: Fri Sep 18 11:20:22 IST 2026 ===
+[NbConvertApp] Converting notebook thermal_agent_v4.ipynb to notebook
+[IPKernelApp] WARNING | Kernel is running over TCP without encryption. All communication (including code and outputs) is sent in plain text and is susceptible to eavesdropping. Use IPC transport or launch with kernel manager-provisioned CurveZMQ keys to enable transport encryption.
+Traceback (most recent call last):
+  File "/Users/mahizhan/miniconda3/envs/battery/bin/jupyter-nbconvert", line 6, in <module>
+    sys.exit(main())
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/jupyter_core/application.py", line 284, in launch_instance
+    super().launch_instance(argv=argv, **kwargs)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/traitlets/config/application.py", line 1080, in launch_instance
+    app.start()
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/nbconvertapp.py", line 420, in start
+    self.convert_notebooks()
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/nbconvertapp.py", line 597, in convert_notebooks
+    self.convert_single_notebook(notebook_filename)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/nbconvertapp.py", line 563, in convert_single_notebook
+    output, resources = self.export_single_notebook(
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/nbconvertapp.py", line 487, in export_single_notebook
+    output, resources = self.exporter.from_filename(
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/exporters/exporter.py", line 201, in from_filename
+    return self.from_file(f, resources=resources, **kw)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/exporters/exporter.py", line 220, in from_file
+    return self.from_notebook_node(
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/exporters/notebook.py", line 36, in from_notebook_node
+    nb_copy, resources = super().from_notebook_node(nb, resources, **kw)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/exporters/exporter.py", line 154, in from_notebook_node
+    nb_copy, resources = self._preprocess(nb_copy, resources)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/exporters/exporter.py", line 353, in _preprocess
+    nbc, resc = preprocessor(nbc, resc)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/preprocessors/base.py", line 48, in __call__
+    return self.preprocess(nb, resources)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/preprocessors/execute.py", line 103, in preprocess
+    self.preprocess_cell(cell, resources, index)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbconvert/preprocessors/execute.py", line 124, in preprocess_cell
+    cell = self.execute_cell(cell, index, store_history=True)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/jupyter_core/utils/__init__.py", line 165, in wrapped
+    return loop.run_until_complete(inner)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/asyncio/base_events.py", line 649, in run_until_complete
+    return future.result()
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbclient/client.py", line 1062, in async_execute_cell
+    await self._check_raise_for_error(cell, cell_index, exec_reply)
+  File "/Users/mahizhan/miniconda3/envs/battery/lib/python3.10/site-packages/nbclient/client.py", line 918, in _check_raise_for_error
+    raise CellExecutionError.from_cell_and_msg(cell, exec_reply_content)
+nbclient.exceptions.CellExecutionError: An error occurred while executing the following cell:
+------------------
+# Hyperparameters
+ALPHA_R   = 0.10   # thermal comfort weight
+BETA      = 5.0    # stress penalty weight
+GAMMA_E   = 0.01   # energy efficiency weight
+ETA       = 0.005  # smoothness weight
+EPISODES  = 1500   # training episodes per agent per seed
+STEPS     = 400    # steps per episode
+EVAL_FREQ = 150    # evaluate every N episodes
+EVAL_EPS  = 20     # episodes per evaluation
+
+def run_episode(agent_or_pid, env, explore=True, is_pid=False):
+    """Run one episode and return metrics dict."""
+    obs = env.reset()
+    R, temps, stresses, cools = 0.0, [], [], []
+    while True:
+        if is_pid:
+            err = env.T - env.T_target
+            action = np.array([np.clip(20.0 + 2.0*err + 0.1*err**2, 0, env.P_max)])
+        else:
+            raw = agent_or_pid.act(obs, explore=explore)
+            action = (raw + 1.0) / 2.0 * env.P_max  # tanh → [0, P_max]
+            action = np.array([action[0]])
+        obs, r, done, info = env.step(action)
+        R += r
+        temps.append(info['T'])
+        stresses.append(info['stress'])
+        cools.append(info['P_cool'] * env.dt)
+        if done: break
+    return {
+        'R': R,
+        'T_MAE': float(np.mean(np.abs(np.array(temps) - env.T_target))),
+        'T_peak': float(np.max(temps)),
+        'cum_stress': float(np.sum(stresses)),
+        'cooling': float(np.sum(cools)),
+        'cap_est': float(env.Q_hat / env.Q_ep_ref * 100),  # surrogate-estimated
+        'safety': float(np.sum(np.array(temps) > env.T_max)),
+    }
+
+# Multi-seed training
+all_results = {}  # seed -> agent_name -> [episode metrics]
+
+for seed in SEEDS:
+    print('\n' + '='*70)
+    print(f'SEED {seed}')
+    print('='*70)
+    torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
+
+    # Four environments using TRAIN profiles
+    env_full     = BatteryThermalEnvV4(train_profiles, alpha=ALPHA_R, beta=BETA,
+                                        gamma_e=GAMMA_E, eta=ETA, steps=STEPS, adaptive=True)
+    env_noadapt  = BatteryThermalEnvV4(train_profiles, alpha=ALPHA_R, beta=BETA,
+                                        gamma_e=GAMMA_E, eta=ETA, steps=STEPS, adaptive=False)
+    env_nostress = BatteryThermalEnvV4(train_profiles, alpha=ALPHA_R, beta=0.0,
+                                        gamma_e=GAMMA_E, eta=ETA, steps=STEPS, adaptive=False)
+
+    # Test environments using TEST profiles (unseen cells)
+    env_test     = BatteryThermalEnvV4(test_profiles, alpha=ALPHA_R, beta=BETA,
+                                        gamma_e=GAMMA_E, eta=ETA, steps=STEPS, adaptive=True)
+
+    agents = {
+        'SAC-Full':       (SACAgent(8,1), env_full),
+        'SAC-NoAdaptive': (SACAgent(8,1), env_noadapt),
+        'SAC-NoStress':   (SACAgent(8,1), env_nostress),
+    }
+
+    buffers = {k: ReplayBuffer() for k in agents}
+    seed_results = {k: [] for k in list(agents.keys()) + ['PID']}
+
+    for ep in range(1, EPISODES+1):
+        for name, (agent, env) in agents.items():
+            buf = buffers[name]
+            obs = env.reset()
+            while True:
+                raw = agent.act(obs, explore=True)
+                action = np.array([(raw[0]+1.0)/2.0 * env.P_max])
+                obs2, r, done, info = env.step(action)
+                buf.push(obs, raw, [r], obs2, [float(done)])
+                obs = obs2
+                agent.update(buf)
+                if done: break
+
+        # Periodic evaluation on TEST cells
+        if ep % EVAL_FREQ == 0:
+            for name, (agent, _) in agents.items():
+                metrics = [run_episode(agent, env_test, explore=False) for _ in range(EVAL_EPS)]
+                avg = {k: float(np.mean([m[k] for m in metrics])) for k in metrics[0]}
+                avg['episode'] = ep
+                seed_results[name].append(avg)
+            # PID baseline
+            pid_metrics = [run_episode(None, env_test, is_pid=True) for _ in range(EVAL_EPS)]
+            pid_avg = {k: float(np.mean([m[k] for m in pid_metrics])) for k in pid_metrics[0]}
+            pid_avg['episode'] = ep
+            seed_results['PID'].append(pid_avg)
+            print(f'  ep={ep}/{EPISODES} | SAC-Full: R={seed_results["SAC-Full"][-1]["R"]:.1f}, '
+                  f'T_MAE={seed_results["SAC-Full"][-1]["T_MAE"]:.2f}°C, '
+                  f'stress={seed_results["SAC-Full"][-1]["cum_stress"]:.4f}, '
+                  f'cool={seed_results["SAC-Full"][-1]["cooling"]:.0f}J')
+
+    all_results[seed] = seed_results
+    print(f'Seed {seed} complete.')
+
+print('\nAll seeds complete!')
+
+------------------
+
+----- stdout -----
+
+======================================================================
+SEED 42
+======================================================================
+----- stdout -----
+  ep=150/1500 | SAC-Full: R=-444.2, T_MAE=3.15°C, stress=0.0000, cool=0J
+----- stdout -----
+  ep=300/1500 | SAC-Full: R=-467.6, T_MAE=3.24°C, stress=0.0000, cool=0J
+----- stdout -----
+  ep=450/1500 | SAC-Full: R=-509.7, T_MAE=3.34°C, stress=0.0000, cool=0J
+----- stdout -----
+  ep=600/1500 | SAC-Full: R=-382.1, T_MAE=3.00°C, stress=0.0000, cool=0J
+------------------
+
+[0;31m---------------------------------------------------------------------------[0m
+[0;31mValueError[0m                                Traceback (most recent call last)
+Cell [0;32mIn[9], line 74[0m
+[1;32m     72[0m obs [38;5;241m=[39m env[38;5;241m.[39mreset()
+[1;32m     73[0m [38;5;28;01mwhile[39;00m [38;5;28;01mTrue[39;00m:
+[0;32m---> 74[0m     raw [38;5;241m=[39m [43magent[49m[38;5;241;43m.[39;49m[43mact[49m[43m([49m[43mobs[49m[43m,[49m[43m [49m[43mexplore[49m[38;5;241;43m=[39;49m[38;5;28;43;01mTrue[39;49;00m[43m)[49m
+[1;32m     75[0m     action [38;5;241m=[39m np[38;5;241m.[39marray([(raw[[38;5;241m0[39m][38;5;241m+[39m[38;5;241m1.0[39m)[38;5;241m/[39m[38;5;241m2.0[39m [38;5;241m*[39m env[38;5;241m.[39mP_max])
+[1;32m     76[0m     obs2, r, done, info [38;5;241m=[39m env[38;5;241m.[39mstep(action)
+
+Cell [0;32mIn[8], line 60[0m, in [0;36mSACAgent.act[0;34m(self, obs, explore)[0m
+[1;32m     58[0m [38;5;28;01mwith[39;00m torch[38;5;241m.[39mno_grad():
+[1;32m     59[0m     [38;5;28;01mif[39;00m explore:
+[0;32m---> 60[0m         a, _ [38;5;241m=[39m [38;5;28;43mself[39;49m[38;5;241;43m.[39;49m[43mactor[49m[38;5;241;43m.[39;49m[43msample[49m[43m([49m[43mobs_t[49m[43m)[49m
+[1;32m     61[0m     [38;5;28;01melse[39;00m:
+[1;32m     62[0m         mu, _ [38;5;241m=[39m [38;5;28mself[39m[38;5;241m.[39mactor(obs_t)
+
+Cell [0;32mIn[8], line 17[0m, in [0;36mActor.sample[0;34m(self, x)[0m
+[1;32m     15[0m mu, log_std [38;5;241m=[39m [38;5;28mself[39m(x)
+[1;32m     16[0m std [38;5;241m=[39m log_std[38;5;241m.[39mexp()
+[0;32m---> 17[0m dist [38;5;241m=[39m [43mtorch[49m[38;5;241;43m.[39;49m[43mdistributions[49m[38;5;241;43m.[39;49m[43mNormal[49m[43m([49m[43mmu[49m[43m,[49m[43m [49m[43mstd[49m[43m)[49m
+[1;32m     18[0m u [38;5;241m=[39m dist[38;5;241m.[39mrsample()
+[1;32m     19[0m a [38;5;241m=[39m torch[38;5;241m.[39mtanh(u)
+
+File [0;32m~/miniconda3/envs/battery/lib/python3.10/site-packages/torch/distributions/normal.py:66[0m, in [0;36mNormal.__init__[0;34m(self, loc, scale, validate_args)[0m
+[1;32m     64[0m [38;5;28;01melse[39;00m:
+[1;32m     65[0m     batch_shape [38;5;241m=[39m [38;5;28mself[39m[38;5;241m.[39mloc[38;5;241m.[39msize()
+[0;32m---> 66[0m [38;5;28;43msuper[39;49m[43m([49m[43m)[49m[38;5;241;43m.[39;49m[38;5;21;43m__init__[39;49m[43m([49m[43mbatch_shape[49m[43m,[49m[43m [49m[43mvalidate_args[49m[38;5;241;43m=[39;49m[43mvalidate_args[49m[43m)[49m
+
+File [0;32m~/miniconda3/envs/battery/lib/python3.10/site-packages/torch/distributions/distribution.py:77[0m, in [0;36mDistribution.__init__[0;34m(self, batch_shape, event_shape, validate_args)[0m
+[1;32m     75[0m         valid [38;5;241m=[39m constraint[38;5;241m.[39mcheck(value)
+[1;32m     76[0m         [38;5;28;01mif[39;00m [38;5;129;01mnot[39;00m torch[38;5;241m.[39m_is_all_true(valid):
+[0;32m---> 77[0m             [38;5;28;01mraise[39;00m [38;5;167;01mValueError[39;00m(
+[1;32m     78[0m                 [38;5;124mf[39m[38;5;124m"[39m[38;5;124mExpected parameter [39m[38;5;132;01m{[39;00mparam[38;5;132;01m}[39;00m[38;5;124m [39m[38;5;124m"[39m
+[1;32m     79[0m                 [38;5;124mf[39m[38;5;124m"[39m[38;5;124m([39m[38;5;132;01m{[39;00m[38;5;28mtype[39m(value)[38;5;241m.[39m[38;5;18m__name__[39m[38;5;132;01m}[39;00m[38;5;124m of shape [39m[38;5;132;01m{[39;00m[38;5;28mtuple[39m(value[38;5;241m.[39mshape)[38;5;132;01m}[39;00m[38;5;124m) [39m[38;5;124m"[39m
+[1;32m     80[0m                 [38;5;124mf[39m[38;5;124m"[39m[38;5;124mof distribution [39m[38;5;132;01m{[39;00m[38;5;28mrepr[39m([38;5;28mself[39m)[38;5;132;01m}[39;00m[38;5;124m [39m[38;5;124m"[39m
+[1;32m     81[0m                 [38;5;124mf[39m[38;5;124m"[39m[38;5;124mto satisfy the constraint [39m[38;5;132;01m{[39;00m[38;5;28mrepr[39m(constraint)[38;5;132;01m}[39;00m[38;5;124m, [39m[38;5;124m"[39m
+[1;32m     82[0m                 [38;5;124mf[39m[38;5;124m"[39m[38;5;124mbut found invalid values:[39m[38;5;130;01m\n[39;00m[38;5;132;01m{[39;00mvalue[38;5;132;01m}[39;00m[38;5;124m"[39m
+[1;32m     83[0m             )
+[1;32m     84[0m [38;5;28msuper[39m()[38;5;241m.[39m[38;5;21m__init__[39m()
+
+[0;31mValueError[0m: Expected parameter loc (Tensor of shape (1, 1)) of distribution Normal(loc: tensor([[nan]]), scale: tensor([[nan]])) to satisfy the constraint Real(), but found invalid values:
+tensor([[nan]])
+
+
+ERROR conda.cli.main_run:execute(127): `conda run jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=86400 --ExecutePreprocessor.kernel_name=battery thermal_agent_v4.ipynb` failed. (See above for error)
+TRAINING COMPLETE: Fri Sep 18 12:25:57 IST 2026

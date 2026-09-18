@@ -1,0 +1,30 @@
+Device: cpu | PyTorch 2.14.0 | Seeds: [42, 52, 62, 72, 82]
+Surrogate loaded | y_mean=1.0331 Ah | num_pts=60
+Loading data...
+Total cells: 124
+Split: 70 train | 19 val | 35 test
+Split saved to data_split.json
+Stress polynomial fit on 58,549 cycles from 70 training cells
+  fade = 0.000104 + -0.000100*T + 0.000002*T^2 + 0.000418*I
+  Polynomial R² = 0.0024
+  K_STRESS (calibrated) = 0.000089
+Extracting profiles...
+Profiles — Train: 60,094 | Val: 14,163 | Test: 25,004
+Validating surrogate on test cells...
+Surrogate on test cells: MAE=0.0037 Ah | RMSE=0.0042 Ah | R²=0.8043
+
+======================================================================
+STARTING MULTI-SEED TRAINING
+======================================================================
+
+======================================================================
+SEED 42
+======================================================================
+Traceback (most recent call last):
+  File "/Users/mahizhan/Documents/Sem7/Github/data-driven-prediction-of-battery-cycle-life-before-capacity-degradation/run_thermal_v4.py", line 479, in <module>
+    buffers = {k: ReplayBuffer() for k in agents}
+                  ~~~~~~~~~~~~^^
+  File "/Users/mahizhan/Documents/Sem7/Github/data-driven-prediction-of-battery-cycle-life-before-capacity-degradation/run_thermal_v4.py", line 347, in __init__
+    self.buf = deque(maxlen=cap)
+               ^^^^^
+NameError: name 'deque' is not defined
